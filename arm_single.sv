@@ -205,6 +205,9 @@ module decoder (input  logic [1:0] Op,
   	  4'b0010: ALUControl = 2'b01; // SUB
           4'b0000: ALUControl = 2'b10; // AND
   	  4'b1100: ALUControl = 2'b11; // ORR
+	  4'b????: ALUControl = 2'b??; //BIC
+	  4'b????: ALUControl = 2'b??; // CMN
+	  4'b????: ALUControl = 2'b??; // CMP
   	  default: ALUControl = 2'bx;  // unimplemented
 	endcase
 	// update flags if S bit is set 
@@ -410,9 +413,11 @@ module alu (input  logic [31:0] a, b,
             output logic [3:0]  ALUFlags);
    
    logic 			neg, zero, carry, overflow;
+   logic [31:0]			complementb; // for BIC
    logic [31:0] 		condinvb;
    logic [32:0] 		sum;
    
+   assign complementb = ~b
    assign condinvb = ALUControl[0] ? ~b : b;
    assign sum = a + condinvb + ALUControl[0];
 
@@ -421,8 +426,9 @@ module alu (input  logic [31:0] a, b,
        2'b0?: Result = sum;
        2'b10: Result = a & b;
        2'b11: Result = a | b;
+	   2'b???: Result = a & complementb // BIC operation
      endcase
-
+   
    assign neg      = Result[31];
    assign zero     = (Result == 32'b0);
    assign carry    = (ALUControl[1] == 1'b0) & sum[32];
@@ -430,5 +436,11 @@ module alu (input  logic [31:0] a, b,
                      ~(a[31] ^ b[31] ^ ALUControl[0]) & 
                      (a[31] ^ sum[31]); 
    assign ALUFlags    = {neg, zero, carry, overflow};
+   
+   always_comb
+    casex (ALUControl[1:0])
+	   2'b???: Result = ALUResult; //CMP
+	   2'b???: Result = ALUResult; //CMN
+	 endcase
    
 endmodule // alu
