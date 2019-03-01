@@ -217,10 +217,14 @@ module decoder (input  logic [1:0] Op,
       	  4'b0010: ALUControl = 3'b001; // SUB
       	  4'b0010: ALUControl = 3'b101; // SBC
           4'b0000: ALUControl = 3'b010; // AND
+		  4'b1000: ALUControl = 3'b010; // TST, just and
       	  4'b1100: ALUControl = 3'b011; // ORR
+		  4'b0001: ALUControl = 3'b111; // EOR
+		  4'b1001: ALUControl = 3'b111; // TEQ, just xor
     	  4'b1110: ALUControl = 3'b110; // BIC, and w/ inverted b
     	  4'b1011: ALUControl = 3'b000; // CMN, just add
     	  4'b1010: ALUControl = 3'b001; // CMP, just subtract
+		  4'b1111: ALUControl = 3'b100; // MVN, do ~a
       	  default: ALUControl = 3'bx;   // unimplemented
 		endcase
 		// update flags if S bit is set 
@@ -427,7 +431,6 @@ module alu (input  logic [31:0] a, b,
    
    logic 			neg, zero, carry, overflow;
    logic [31:0] 		condinvb;
-   logic [31:0]			condinvb2; // for BIC
    logic [32:0] 		sum;
    logic [31:0]     carrycompensator;
    
@@ -441,15 +444,17 @@ module alu (input  logic [31:0] a, b,
      endcase
    
    assign condinvb = ALUControl[0] ? ~b : b;
-   assign condinvb2 = ALUControl[2] ? ~b : b;
    assign sum = a + condinvb + ALUControl[0] + carrycompensator;
    
 
    always_comb
-     casex (ALUControl[1:0])
-       2'b0?: Result = sum;
-       2'b10: Result = a & condinvb2;
-       2'b11: Result = a | condinvb2;
+     casex (ALUControl[2:0])
+       3'b00?: Result = sum;
+       3'b010: Result = a & b;
+	   3'b110: Result = a & ~b;
+       3'b011: Result = a | b;
+	   3'b111: Result = a ^ b;
+	   3'b100: Result = ~a;
      endcase
    
    assign neg      = Result[31];
