@@ -123,8 +123,8 @@ module arm (input  logic        clk, reset,
    logic [3:0] 			ALUFlags;
    logic 			RegWrite, 
 				ALUSrc, MemtoReg, SrcBtoReg, PCSrc;
-   logic [2:0] 			RegSrc;   
-   logic [1:0] 			ImmSrc, ALUControl;
+   logic [2:0] 			RegSrc, ALUControl;   
+   logic [1:0] 			ImmSrc;
    
    controller c (clk, reset, Instr[31:12], ALUFlags, 
 		 RegSrc, RegWrite, ImmSrc, 
@@ -146,7 +146,7 @@ module controller (input  logic         clk, reset,
                    output logic         RegWrite,
                    output logic [1:0]   ImmSrc,
                    output logic         ALUSrc, 
-                   output logic [1:0]   ALUControl,
+                   output logic [2:0]   ALUControl,
                    output logic         MemWrite, MemtoReg, SrcBtoReg,
                    output logic         PCSrc);
    
@@ -155,7 +155,7 @@ module controller (input  logic         clk, reset,
    
    decoder dec (Instr[27:26], Instr[25:20], Instr[15:12],
 		FlagW, PCS, RegW, MemW,
-		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, ALUControl, RegSrc);
+		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl);
    condlogic cl (clk, reset, Instr[31:28], ALUFlags,
 		 FlagW, PCS, RegW, MemW, 
 		 PCSrc, RegWrite, MemWrite);
@@ -167,28 +167,39 @@ module decoder (input  logic [1:0] Op,
 		output logic [1:0] FlagW,
 		output logic       PCS, RegW, MemW,
 		output logic       MemtoReg, SrcBtoReg, ALUSrc,
-		output logic [1:0] ImmSrc, ALUControl,
-		output logic [2:0] RegSrc);
+		output logic [1:0] ImmSrc,
+		output logic [2:0] RegSrc, ALUControl);
    
    logic [11:0] 		   controls;
    logic 			   Branch, ALUOp;
 
+/*
+       // LDR
+       2'b01: if (Funct[0]) controls = 11'b000_0111_01000;
+       // STR
+       else controls = 11'b010_0111_00100;
+	   controls = 12'b000_01_1_1_0_1_0_0_0 |
+				{1'b0, ~Funct[0], 6'd0, Funct[0], ~Funct[0], 2'd0};
+
+   assign {RegSrc, ImmSrc, ALUSrc, MemtoReg,
+	      RegW, MemW, Branch, ALUOp} = controls;
+ */
    // Main Decoder
    always_comb
      case(Op)
               //Data operations.
-       2'b00: controls = 12'b0000_0000_1001 | {6'd0, Funct[5], 5'd0} |
-                         {4'd0, (Funct[4] & Funct[3] & ~Funct[2] & Funct[3]), 7'd0}; 
+       2'b00: controls = 12'b000_00_0_0_0_0_0_0_1 | 
+						{5'd0, Funct[5], 6'd0} | //Immediate?
+                        {7'd0, (Funct[4] & Funct[3] & ~Funct[2] & Funct[1]), 4'd0} | //Write srcb to reg?
+                        {8'd0, ~(Funct[4] & ~Funct[3]), 3'd0}; //Write to register, or just update fields?
        
-              // LDR
-       2'b01: if (Funct[0]) controls = 12'b0000_0111_1000;
-              // STR
-              else controls = 12'b0100_0111_0100;
+              // LDR/STR
+       2'b01: controls = 12'b000_01_1_1_0_0_0_0_0 |
+				{1'b0, ~Funct[0], 6'd0, Funct[0], ~Funct[0], 2'd0}; //Funct[0] indicates LDR
               
-              // BL
-       2'b10: if (Funct[4]) controls = 12'b1011_0010_1010;
-              // B
-              else controls = 12'b001_1010_0010;
+              // B/BL
+       2'b10: controls = 12'b001_10_1_0_0_0_0_1_0 |
+						{Funct[4], 7'd0, Funct[4], 3'd0}; //Account for BL
        
                // Unimplemented
        default: controls = 12'bx;
@@ -200,25 +211,27 @@ module decoder (input  logic [1:0] Op,
    // ALU Decoder             
    always_comb
      if (ALUOp) begin                 // which DP Instr?
-	case(Funct[4:1]) 
-  	  4'b0100: ALUControl = 2'b00; // ADD
-  	  4'b0010: ALUControl = 2'b01; // SUB
-          4'b0000: ALUControl = 2'b10; // AND
-  	  4'b1100: ALUControl = 2'b11; // ORR
-	  4'b????: ALUControl = 2'b??; //BIC
-	  4'b????: ALUControl = 2'b??; // CMN
-	  4'b????: ALUControl = 2'b??; // CMP
-  	  default: ALUControl = 2'bx;  // unimplemented
-	endcase
-	// update flags if S bit is set 
-	// (C & V only updated for arith instructions)
-	FlagW[1]      = Funct[0]; // FlagW[1] = S-bit
-	// FlagW[0] = S-bit & (ADD | SUB)
-	FlagW[0]      = Funct[0] & 
+	    case(Funct[4:1]) 
+  	      4'b0100: ALUControl = 3'b000; // ADD
+  	      4'b0100: ALUControl = 3'b100; // ADC
+      	  4'b0010: ALUControl = 3'b001; // SUB
+      	  4'b0010: ALUControl = 3'b101; // SBC
+          4'b0000: ALUControl = 3'b010; // AND
+      	  4'b1100: ALUControl = 3'b011; // ORR
+    	  4'b1110: ALUControl = 3'b110; // BIC, and w/ inverted b
+    	  4'b1011: ALUControl = 3'b000; // CMN, just add
+    	  4'b1010: ALUControl = 3'b001; // CMP, just subtract
+      	  default: ALUControl = 3'bx;   // unimplemented
+		endcase
+		// update flags if S bit is set 
+		// (C & V only updated for arith instructions)
+		FlagW[1]      = Funct[0]; // FlagW[1] = S-bit
+		// FlagW[0] = S-bit & (ADD | SUB)
+		FlagW[0]      = Funct[0] & 
 			(ALUControl == 2'b00 | ALUControl == 2'b01); 
      end else begin
-	ALUControl = 2'b00; // add for non-DP instructions
-	FlagW      = 2'b00; // don't update Flags
+		ALUControl = 3'b000; // add for non-DP instructions
+		FlagW      = 2'b00; // don't update Flags
      end
    
    // PC Logic
@@ -288,7 +301,7 @@ module datapath (input  logic        clk, reset,
                  input  logic        RegWrite,
                  input  logic [1:0]  ImmSrc,
                  input  logic        ALUSrc,
-                 input  logic [1:0]  ALUControl,
+                 input  logic [2:0]  ALUControl,
                  input  logic        MemtoReg,
                  input  logic        SrcBtoReg, 
                  input  logic        PCSrc,
@@ -345,8 +358,8 @@ module regfile (input  logic        clk,
    always_ff @(posedge clk)
      if (we3) rf[wa3] <= wd3;	
 
-   assign rd1 = (ra1 == 4'b1111) ? r15 : rf[ra1];
-   assign rd2 = (ra2 == 4'b1111) ? r15 : rf[ra2];
+   assign rd1 = (ra1 == 4'd15) ? r15 : rf[ra1];
+   assign rd2 = (ra2 == 4'd15) ? r15 : rf[ra2];
    
 endmodule // regfile
 
@@ -408,25 +421,35 @@ module mux2 #(parameter WIDTH = 8)
 endmodule // mux2
 
 module alu (input  logic [31:0] a, b,
-            input  logic [1:0]  ALUControl,
+            input  logic [2:0]  ALUControl,
             output logic [31:0] Result,
             output logic [3:0]  ALUFlags);
    
    logic 			neg, zero, carry, overflow;
-   logic [31:0]			complementb; // for BIC
    logic [31:0] 		condinvb;
+   logic [31:0]			condinvb2; // for BIC
    logic [32:0] 		sum;
+   logic [31:0]     carrycompensator;
    
-   assign complementb = ~b
+   always_comb
+     casex ({ALUControl[2], ALUControl[0], carry})
+        3'b0??: carrycompensator = 32'd0; //ALUControl[2] specifies ADC or SBC.
+        3'b100: carrycompensator = 32'd0; //Adding, carry is 0
+        3'b101: carrycompensator = 32'd1; //Adding, carry is 1
+        3'b110: carrycompensator = -32'd1;//Subtracting, carry is 0 
+        3'b111: carrycompensator = 32'd0; //Subtracting, carry is 0 
+     endcase
+   
    assign condinvb = ALUControl[0] ? ~b : b;
-   assign sum = a + condinvb + ALUControl[0];
+   assign condinvb2 = ALUControl[2] ? ~b : b;
+   assign sum = a + condinvb + ALUControl[0] + carrycompensator;
+   
 
    always_comb
      casex (ALUControl[1:0])
        2'b0?: Result = sum;
-       2'b10: Result = a & b;
-       2'b11: Result = a | b;
-	   2'b???: Result = a & complementb // BIC operation
+       2'b10: Result = a & condinvb2;
+       2'b11: Result = a | condinvb2;
      endcase
    
    assign neg      = Result[31];
@@ -436,11 +459,5 @@ module alu (input  logic [31:0] a, b,
                      ~(a[31] ^ b[31] ^ ALUControl[0]) & 
                      (a[31] ^ sum[31]); 
    assign ALUFlags    = {neg, zero, carry, overflow};
-   
-   always_comb
-    casex (ALUControl[1:0])
-	   2'b???: Result = ALUResult; //CMP
-	   2'b???: Result = ALUResult; //CMN
-	 endcase
    
 endmodule // alu

@@ -1,7 +1,7 @@
-# do arm_single.do
-# ./memfile.dat
+# do memfile.do
+# ./memfile.x
 # Model Technology ModelSim PE Student Edition vlog 10.4a Compiler 2015.03 Apr  7 2015
-# Start time: 13:00:07 on Feb 20,2019
+# Start time: 00:47:29 on Mar 01,2019
 # vlog -reportprogress 300 imem.v dmem.v arm_single.sv 
 # -- Compiling module imem
 # -- Compiling module dmem
@@ -23,7 +23,7 @@
 # 
 # Top level modules:
 # 	testbench
-# End time: 13:00:07 on Feb 20,2019, Elapsed time: 0:00:00
+# End time: 00:47:30 on Mar 01,2019, Elapsed time: 0:00:01
 # Errors: 0, Warnings: 0
 # //  ModelSim PE Student Edition 10.4a Apr  7 2015 
 # //
@@ -43,8 +43,8 @@
 # // THE ModelSim PE Student Edition IS NOT A SUPPORTED PRODUCT.
 # // FOR HIGHER EDUCATION PURPOSES ONLY
 # //
-# vsim -do "arm_single.do" 
-# Start time: 13:00:08 on Feb 20,2019
+# vsim -do "memfile.do" 
+# Start time: 00:47:30 on Mar 01,2019
 # Loading sv_std.std
 # Loading work.testbench
 # Loading work.top
@@ -63,10 +63,5 @@
 # Loading work.alu
 # Loading work.imem
 # Loading work.dmem
-# ** Error: (vish-4014) No objects found matching '/testbench/dut/arm/dp/sh/*'.
-# Error in macro ./arm_single.do line 51
-# (vish-4014) No objects found matching '/testbench/dut/arm/dp/sh/*'.
-#     while executing
-# "add wave -hex /testbench/dut/arm/dp/sh/*"
-# End time: 13:49:11 on Feb 20,2019, Elapsed time: 0:49:03
-# Errors: 3, Warnings: 0
+# End time: 00:50:39 on Mar 01,2019, Elapsed time: 0:03:09
+# Errors: 0, Warnings: 0

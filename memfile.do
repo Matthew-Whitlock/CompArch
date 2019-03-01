@@ -26,7 +26,7 @@ if [file exists work] {
 }
 vlib work
 
-set MEMORY_FILE ./memfile.dat
+set MEMORY_FILE ./memfile.x
 
 # compile source files
 vlog imem.v dmem.v arm_single.sv
@@ -47,6 +47,10 @@ add wave -noupdate -divider -height 32 "Datapath"
 add wave -hex /testbench/dut/arm/dp/*
 add wave -noupdate -divider -height 32 "Control"
 add wave -hex /testbench/dut/arm/c/*
+add wave -noupdate -divider -height 32 "Decoder"
+add wave -hex /testbench/dut/arm/c/dec/*
+add wave -noupdate -divider -height 32 "ALU"
+add wave -hex /testbench/dut/arm/dp/alu/*
 add wave -noupdate -divider -height 32 "Data Memory"
 add wave -hex /testbench/dut/dmem/*
 add wave -noupdate -divider -height 32 "Instruction Memory"
