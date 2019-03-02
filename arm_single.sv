@@ -122,68 +122,67 @@ module arm (input  logic        clk, reset,
    
    logic [3:0] 			ALUFlags;
    logic 			RegWrite, 
-				ALUSrc, MemtoReg, SrcBtoReg, PCSrc;
-   logic [2:0] 			RegSrc, ALUControl;   
-   logic [1:0] 			ImmSrc;
+				ALUSrc, MemtoReg, SrcBtoReg, PCSrc, shifter_carry;
+   logic [2:0] 			RegSrc;
+   logic [3:0] 			ALUControl; 
+   logic [1:0] 			ImmSrc, shiftType;
+   logic [4:0]			shamt;
    
-   controller c (clk, reset, Instr[31:12], ALUFlags, 
+   controller c (clk, reset, Instr[31:5], ALUFlags, shifter_carry,
 		 RegSrc, RegWrite, ImmSrc, 
 		 ALUSrc, ALUControl,
-		 MemWrite, MemtoReg, SrcBtoReg, PCSrc);
+		 MemWrite, MemtoReg, SrcBtoReg, PCSrc, shiftType, shamt, carry_state);
    datapath dp (clk, reset, 
 		RegSrc, RegWrite, ImmSrc,
-		ALUSrc, ALUControl,
+		ALUSrc, ALUControl, carry_state,
 		MemtoReg, SrcBtoReg,  PCSrc,
-		ALUFlags, PC, Instr,
+		shiftType, shamt, shifter_carry, ALUFlags, PC, Instr,
 		ALUResult, WriteData, ReadData);
    
 endmodule // arm
 
 module controller (input  logic         clk, reset,
-                   input  logic [31:12] Instr,
+                   input  logic [31:5] Instr,
                    input  logic [3:0]   ALUFlags,
+				   input  logic 		shifter_carry,
                    output logic [2:0]   RegSrc,
                    output logic         RegWrite,
                    output logic [1:0]   ImmSrc,
                    output logic         ALUSrc, 
-                   output logic [2:0]   ALUControl,
+                   output logic [3:0]   ALUControl,
                    output logic         MemWrite, MemtoReg, SrcBtoReg,
-                   output logic         PCSrc);
+                   output logic         PCSrc,
+				   output logic [1:0]	shiftType,
+				   output logic [4:0]	shamt,
+				   output logic 		carry_out);
    
    logic [1:0] 				FlagW;
-   logic 				PCS, RegW, MemW;
+   logic 				PCS, RegW, MemW, cFromShifter;
    
-   decoder dec (Instr[27:26], Instr[25:20], Instr[15:12],
-		FlagW, PCS, RegW, MemW,
-		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl);
-   condlogic cl (clk, reset, Instr[31:28], ALUFlags,
+   decoder dec (Instr[27:26], Instr[25:20], Instr[15:12], Instr[11:5],
+		FlagW, PCS, RegW, MemW, cFromShifter,
+		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl, shiftType, shamt);
+   condlogic cl (clk, reset, Instr[31:28], ALUFlags, shifter_carry, cFromShifter,
 		 FlagW, PCS, RegW, MemW, 
-		 PCSrc, RegWrite, MemWrite);
+		 PCSrc, RegWrite, MemWrite, carry_out);
 endmodule
 
 module decoder (input  logic [1:0] Op,
 		input  logic [5:0] Funct,
 		input  logic [3:0] Rd,
+		input logic  [6:0] shiftInfo,
 		output logic [1:0] FlagW,
-		output logic       PCS, RegW, MemW,
+		output logic       PCS, RegW, MemW, cFromShifter,
 		output logic       MemtoReg, SrcBtoReg, ALUSrc,
 		output logic [1:0] ImmSrc,
-		output logic [2:0] RegSrc, ALUControl);
+		output logic [2:0] RegSrc, 
+		output logic [3:0] ALUControl,
+		output logic [1:0] shiftType,
+		output logic [4:0] shamt);
    
    logic [11:0] 		   controls;
-   logic 			   Branch, ALUOp;
+   logic 			   Branch, ALUOp, dataOp, immOp;
 
-/*
-       // LDR
-       2'b01: if (Funct[0]) controls = 11'b000_0111_01000;
-       // STR
-       else controls = 11'b010_0111_00100;
-	   controls = 12'b000_01_1_1_0_1_0_0_0 |
-				{1'b0, ~Funct[0], 6'd0, Funct[0], ~Funct[0], 2'd0};
-
-   assign {RegSrc, ImmSrc, ALUSrc, MemtoReg,
-	      RegW, MemW, Branch, ALUOp} = controls;
- */
    // Main Decoder
    always_comb
      case(Op)
@@ -207,34 +206,41 @@ module decoder (input  logic [1:0] Op,
 
    assign {RegSrc, ImmSrc, ALUSrc, MemtoReg, SrcBtoReg,
 	      RegW, MemW, Branch, ALUOp} = controls;
+		  
+	assign dataOp = (~Op[1]) & (~Op[0]); //We only handle barrel shifting for data operations, for simplicity.
+	assign immOp = Funct[5]; //Funct[5] specifies an immediate for data operations.
+	assign shamt = {shiftInfo[6:3], shiftInfo[2] & ~immOp}; //Last bit always 0 for immediates
+	assign shiftType = shiftInfo[1:0] | {immOp, immOp}; //Always 11 (ROR) for immediates.
+	assign cFromShifter = dataOp & Funct[4] & Funct[3] & ~Funct[2] & Funct[1]; //Get carry from the shifter iff we're doing a MOV/LSL/ASR/LSR/ROR
+	
       
    // ALU Decoder             
    always_comb
      if (ALUOp) begin                 // which DP Instr?
 	    case(Funct[4:1]) 
-  	      4'b0100: ALUControl = 3'b000; // ADD
-  	      4'b0100: ALUControl = 3'b100; // ADC
-      	  4'b0010: ALUControl = 3'b001; // SUB
-      	  4'b0010: ALUControl = 3'b101; // SBC
-          4'b0000: ALUControl = 3'b010; // AND
-		  4'b1000: ALUControl = 3'b010; // TST, just and
-      	  4'b1100: ALUControl = 3'b011; // ORR
-		  4'b0001: ALUControl = 3'b111; // EOR
-		  4'b1001: ALUControl = 3'b111; // TEQ, just xor
-    	  4'b1110: ALUControl = 3'b110; // BIC, and w/ inverted b
-    	  4'b1011: ALUControl = 3'b000; // CMN, just add
-    	  4'b1010: ALUControl = 3'b001; // CMP, just subtract
-		  4'b1111: ALUControl = 3'b100; // MVN, do ~a
-      	  default: ALUControl = 3'bx;   // unimplemented
+  	      4'b0100: ALUControl = 4'b0000; // ADD
+  	      4'b0101: ALUControl = 4'b0100; // ADC
+      	  4'b0010: ALUControl = 4'b0001; // SUB
+      	  4'b0110: ALUControl = 4'b0101; // SBC
+          4'b0000: ALUControl = 4'b0010; // AND
+		  4'b1000: ALUControl = 4'b0010; // TST, just and
+      	  4'b1100: ALUControl = 4'b0011; // ORR
+		  4'b0001: ALUControl = 4'b0111; // EOR
+		  4'b1001: ALUControl = 4'b0111; // TEQ, just xor
+    	  4'b1110: ALUControl = 4'b0110; // BIC, and w/ inverted b
+    	  4'b1011: ALUControl = 4'b0000; // CMN, just add
+    	  4'b1010: ALUControl = 4'b0001; // CMP, just subtract
+		  4'b1111: ALUControl = 4'b1000; // MVN, do ~b
+      	  default: ALUControl = 4'bx;   // unimplemented
 		endcase
 		// update flags if S bit is set 
 		// (C & V only updated for arith instructions)
 		FlagW[1]      = Funct[0]; // FlagW[1] = S-bit
-		// FlagW[0] = S-bit & (ADD | SUB)
+		// FlagW[0] = S-bit & (ADD | SUB) (ADD/SUB indicated by 0?0? to account for add/adc/sub/sbc)
 		FlagW[0]      = Funct[0] & 
-			(ALUControl == 2'b00 | ALUControl == 2'b01); 
+			~(ALUControl[3] | ALUControl[1]); 
      end else begin
-		ALUControl = 3'b000; // add for non-DP instructions
+		ALUControl = 4'b0000; // add for non-DP instructions
 		FlagW      = 2'b00; // don't update Flags
      end
    
@@ -246,19 +252,22 @@ endmodule // decoder
 module condlogic (input  logic       clk, reset,
                   input  logic [3:0] Cond,
                   input  logic [3:0] ALUFlags,
+				  input  logic		 shifter_carry, cFromShifter,
                   input  logic [1:0] FlagW,
                   input  logic       PCS, RegW, MemW,
-                  output logic       PCSrc, RegWrite, MemWrite);
+                  output logic       PCSrc, RegWrite, MemWrite, carry_out);
    
    logic [1:0] 			     FlagWrite;
    logic [3:0] 			     Flags;
    logic 			     CondEx;
 
+
    // Notice hard-coding of FFs to structurally model
    flopenr #(2) flagreg1 (clk, reset, FlagWrite[1], 
-			  ALUFlags[3:2], Flags[3:2]);
+			  {ALUFlags[3:2]}, Flags[3:2]);
    flopenr #(2) flagreg0 (clk, reset, FlagWrite[0], 
-			  ALUFlags[1:0], Flags[1:0]);
+			  {(ALUFlags[1] & ~cFromShifter) | (shifter_carry & cFromShifter), ALUFlags[0]}, 
+			  Flags[1:0]);
    
    // write controls are conditional
    condcheck cc (Cond, Flags, CondEx);
@@ -266,6 +275,7 @@ module condlogic (input  logic       clk, reset,
    assign RegWrite  = RegW  & CondEx;
    assign MemWrite  = MemW  & CondEx;
    assign PCSrc     = PCS   & CondEx;
+   assign carry_out = Flags[1];
    
 endmodule // condlogic
 
@@ -305,10 +315,14 @@ module datapath (input  logic        clk, reset,
                  input  logic        RegWrite,
                  input  logic [1:0]  ImmSrc,
                  input  logic        ALUSrc,
-                 input  logic [2:0]  ALUControl,
+                 input  logic [3:0]  ALUControl,
+				 input  logic		 carry_in,
                  input  logic        MemtoReg,
                  input  logic        SrcBtoReg, 
                  input  logic        PCSrc,
+				 input  logic [1:0]	 shiftType,
+				 input  logic [4:0]	 shamt,
+				 output logic 		 shifter_carry,
                  output logic [3:0]  ALUFlags,
                  output logic [31:0] PC,
                  input  logic [31:0] Instr,
@@ -316,7 +330,7 @@ module datapath (input  logic        clk, reset,
                  input  logic [31:0] ReadData);
    
    logic [31:0] 		     PCNext, PCPlus4, PCPlus8;
-   logic [31:0] 		     ExtImm, SrcA, SrcB, logicRes, Result;
+   logic [31:0] 		     ExtImm, SrcA, SrcB, Op2, logicRes, Result;
    logic [3:0] 			     RA1, RA2, RA3;
    logic [31:0] 		     RA4;   
    
@@ -336,13 +350,18 @@ module datapath (input  logic        clk, reset,
                    RA3, RA4, PCPlus8, 
                    SrcA, WriteData); 
    
-   mux2 #(32)  logicmux (ALUResult, SrcB, SrcBtoReg, logicRes);
+   mux2 #(32)  logicmux (ALUResult, Op2, SrcBtoReg, logicRes);
    mux2 #(32)  resmux (logicRes, ReadData, MemtoReg, Result);
    extend      ext (Instr[23:0], ImmSrc, ExtImm);
 
-   // ALU logic
+
+
+   // Shifter logic
    mux2 #(32)  srcbmux (WriteData, ExtImm, ALUSrc, SrcB);
-   alu         alu (SrcA, SrcB, ALUControl, 
+   basicShifter shifter (SrcB, shiftType, shamt, Op2, shifter_carry);
+   
+   
+   alu         alu (SrcA, Op2, ALUControl, carry_in,
                     ALUResult, ALUFlags);
 endmodule // datapath
 
@@ -425,8 +444,9 @@ module mux2 #(parameter WIDTH = 8)
 endmodule // mux2
 
 module alu (input  logic [31:0] a, b,
-            input  logic [2:0]  ALUControl,
-            output logic [31:0] Result,
+            input  logic [3:0]  ALUControl,
+			input  logic		carry_in,
+			output logic [31:0] Result,
             output logic [3:0]  ALUFlags);
    
    logic 			neg, zero, carry, overflow;
@@ -435,7 +455,7 @@ module alu (input  logic [31:0] a, b,
    logic [31:0]     carrycompensator;
    
    always_comb
-     casex ({ALUControl[2], ALUControl[0], carry})
+     casex ({ALUControl[2], ALUControl[0], carry_in})
         3'b0??: carrycompensator = 32'd0; //ALUControl[2] specifies ADC or SBC.
         3'b100: carrycompensator = 32'd0; //Adding, carry is 0
         3'b101: carrycompensator = 32'd1; //Adding, carry is 1
@@ -448,13 +468,13 @@ module alu (input  logic [31:0] a, b,
    
 
    always_comb
-     casex (ALUControl[2:0])
-       3'b00?: Result = sum;
-       3'b010: Result = a & b;
-	   3'b110: Result = a & ~b;
-       3'b011: Result = a | b;
-	   3'b111: Result = a ^ b;
-	   3'b100: Result = ~a;
+     casex (ALUControl[3:0])
+       4'b0?0?: Result = sum;
+       4'b0010: Result = a & b;
+	   4'b0110: Result = a & ~b;
+       4'b0011: Result = a | b;
+	   4'b0111: Result = a ^ b;
+	   4'b1000: Result = ~b;
      endcase
    
    assign neg      = Result[31];
@@ -466,3 +486,43 @@ module alu (input  logic [31:0] a, b,
    assign ALUFlags    = {neg, zero, carry, overflow};
    
 endmodule // alu
+
+module basicShifter (input logic [31:0] src,
+					 input logic [1:0] shiftType,
+					 input logic [4:0] shamt,
+					output logic [31:0] out,
+					output logic carry);
+	//Make some wires with an extra bit on each side to easily handle carries.
+	logic signed [33:0] ext_src;
+	assign ext_src = {shiftType[1] & src[31], src, 1'b0}; //If doing ASR, we want MSB the same as orig MSB
+	logic [63:0] super_ext_src;
+	assign super_ext_src = {src, src}; //Make "rotating" easier (though very inefficient) 
+	logic [33:0] ext_out;
+	logic [63:0] ror_out;
+	assign ror_out = super_ext_src >> shamt;
+	
+	
+	always_comb
+		case (shiftType[1:0])
+			2'b00: begin
+					ext_out = ext_src << shamt; //Shift left
+					carry = ext_src[33];
+					out = ext_out[32:1];
+					end
+			2'b01: begin 
+					ext_out = ext_src >> shamt; //Logical shift right
+					carry = ext_src[0];
+					out = ext_out[32:1];
+					end
+			2'b10: begin 
+					ext_out = ext_src >>> shamt; //Arithmetic shift right
+					carry = ext_src[0];
+					out = ext_out[32:1];
+					end
+			2'b11: begin 
+					ext_out = {1'b0, ror_out[31:0], ror_out[31]}; //ROR
+					carry = ext_src[0];
+					out = ext_out[32:1];
+					end
+		endcase
+endmodule

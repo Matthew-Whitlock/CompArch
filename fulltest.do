@@ -26,7 +26,7 @@ if [file exists work] {
 }
 vlib work
 
-set MEMORY_FILE ./memfile.x
+set MEMORY_FILE ./fulltest.x
 
 # compile source files
 vlog imem.v dmem.v arm_single.sv
@@ -49,6 +49,10 @@ add wave -noupdate -divider -height 32 "Control"
 add wave -hex /testbench/dut/arm/c/*
 add wave -noupdate -divider -height 32 "Decoder"
 add wave -hex /testbench/dut/arm/c/dec/*
+add wave -noupdate -divider -height 32 "CondLogic"
+add wave -hex /testbench/dut/arm/c/cl/*
+add wave -noupdate -divider -height 32 "Shifter"
+add wave -hex /testbench/dut/arm/dp/shifter/*
 add wave -noupdate -divider -height 32 "ALU"
 add wave -hex /testbench/dut/arm/dp/alu/*
 add wave -noupdate -divider -height 32 "Data Memory"
@@ -73,7 +77,7 @@ configure wave -rowmargin 4
 configure wave -childrowmargin 2
 
 -- Run the Simulation
-run 230 ns
+run 1250 ns
 
 -- Save memory for checking (if needed)
 mem save -outfile dmemory.dat -wordsperline 1 /testbench/dut/dmem/RAM
