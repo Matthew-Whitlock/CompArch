@@ -1,1 +1,8 @@
+transcript
+*.mti
+*.mpf
+*.x
+*.wlf
 work/*
+*/work/*
+*.dat
