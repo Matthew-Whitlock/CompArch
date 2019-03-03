@@ -1,10 +1,6 @@
 // arm_single.sv
 // David_Harris@hmc.edu and Sarah_Harris@hmc.edu 25 June 2013
 // Single-cycle implementation of a subset of ARMv4
-// 
-// run 210
-// Expect simulator to print "Simulation succeeded"
-// when the value 7 is written to address 100 (0x64)
 
 // 16 32-bit registers
 // Data-processing instructions
@@ -73,6 +69,21 @@
 //    1101  Signed less/equal             N != V | Z = 1
 //    1110  Always                        any
 
+/* module top (input  logic        clk, reset, 
+			output logic [31:0] WriteData, DataAdr, 
+			output logic        MemWrite);
+
+   logic [31:0] 		PC, Instr, ReadData;
+   
+   // instantiate processor and memories
+   arm arm (clk, reset, PC, Instr, MemWrite, DataAdr, 
+			WriteData, ReadData);
+
+   imem imem (PC, Instr);
+   dmem dmem (ReadData, MemWrite, clk, DataAdr, WriteData);
+   
+endmodule // top */
+
 module testbench();
 
    logic        clk;
@@ -98,31 +109,18 @@ module testbench();
 
 endmodule // testbench
 
-module top (input  logic        clk, reset, 
-            output logic [31:0] WriteData, DataAdr, 
-            output logic        MemWrite);
-
-   logic [31:0] 		PC, Instr, ReadData;
-   
-   // instantiate processor and memories
-   arm arm (clk, reset, PC, Instr, MemWrite, DataAdr, 
-            WriteData, ReadData);
-
-   imem imem (PC, Instr);
-   dmem dmem (ReadData, MemWrite, clk, DataAdr, WriteData);
-   
-endmodule // top
-
 module arm (input  logic        clk, reset,
             output logic [31:0] PC,
             input  logic [31:0] Instr,
             output logic        MemWrite,
             output logic [31:0] ALUResult, WriteData,
-            input  logic [31:0] ReadData);
+            input  logic [31:0] ReadData,
+			output logic 		MStrobe,
+			input  logic 		PReady);
    
    logic [3:0] 			ALUFlags;
-   logic 			RegWrite, 
-				ALUSrc, MemtoReg, SrcBtoReg, PCSrc, shifter_carry;
+   logic 			RegWrite, PCEn,
+					ALUSrc, MemtoReg, SrcBtoReg, PCSrc, shifter_carry;
    logic [2:0] 			RegSrc;
    logic [3:0] 			ALUControl; 
    logic [1:0] 			ImmSrc, shiftType;
@@ -131,13 +129,15 @@ module arm (input  logic        clk, reset,
    controller c (clk, reset, Instr[31:5], ALUFlags, shifter_carry,
 		 RegSrc, RegWrite, ImmSrc, 
 		 ALUSrc, ALUControl,
-		 MemWrite, MemtoReg, SrcBtoReg, PCSrc, shiftType, shamt, carry_state);
+		 MemWrite, MemtoReg, SrcBtoReg, PCSrc, shiftType, shamt, carry_state, MStrobe,
+		 PCEn, PReady);
+   
    datapath dp (clk, reset, 
 		RegSrc, RegWrite, ImmSrc,
 		ALUSrc, ALUControl, carry_state,
 		MemtoReg, SrcBtoReg,  PCSrc,
 		shiftType, shamt, shifter_carry, ALUFlags, PC, Instr,
-		ALUResult, WriteData, ReadData);
+		ALUResult, WriteData, ReadData, PCEn);
    
 endmodule // arm
 
@@ -154,20 +154,23 @@ module controller (input  logic         clk, reset,
                    output logic         PCSrc,
 				   output logic [1:0]	shiftType,
 				   output logic [4:0]	shamt,
-				   output logic 		carry_out);
+				   output logic 		carry_out,
+				   output logic			MStrobe, PCEn,
+				   input  logic 		PReady);
    
    logic [1:0] 				FlagW;
-   logic 				PCS, RegW, MemW, cFromShifter;
+   logic 				PCS, RegW, MemW, cFromShifter, memOp;
    
-   decoder dec (Instr[27:26], Instr[25:20], Instr[15:12], Instr[11:5],
-		FlagW, PCS, RegW, MemW, cFromShifter,
-		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl, shiftType, shamt);
+   decoder dec (clk, reset, Instr[27:26], Instr[25:20], Instr[15:12], 
+		Instr[11:5], FlagW, PCS, RegW, MemW, cFromShifter,
+		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl, shiftType, shamt, memOp);
    condlogic cl (clk, reset, Instr[31:28], ALUFlags, shifter_carry, cFromShifter,
-		 FlagW, PCS, RegW, MemW, 
-		 PCSrc, RegWrite, MemWrite, carry_out);
+		 FlagW, PCS, RegW, MemW, memOp, PReady,
+		 PCSrc, RegWrite, MemWrite, carry_out, MStrobe, PCEn);
 endmodule
 
-module decoder (input  logic [1:0] Op,
+module decoder (input logic clk, reset,
+		input  logic [1:0] Op,
 		input  logic [5:0] Funct,
 		input  logic [3:0] Rd,
 		input logic  [6:0] shiftInfo,
@@ -178,11 +181,13 @@ module decoder (input  logic [1:0] Op,
 		output logic [2:0] RegSrc, 
 		output logic [3:0] ALUControl,
 		output logic [1:0] shiftType,
-		output logic [4:0] shamt);
+		output logic [4:0] shamt,
+		output logic 		memOp);
    
    logic [11:0] 		   controls;
    logic 			   Branch, ALUOp, dataOp, immOp;
-
+	
+	
    // Main Decoder
    always_comb
      case(Op)
@@ -193,8 +198,10 @@ module decoder (input  logic [1:0] Op,
                         {8'd0, ~(Funct[4] & ~Funct[3]), 3'd0}; //Write to register, or just update fields?
        
               // LDR/STR
-       2'b01: controls = 12'b000_01_1_1_0_0_0_0_0 |
+       2'b01: begin 
+				controls = 12'b000_01_1_1_0_0_0_0_0 |
 				{1'b0, ~Funct[0], 6'd0, Funct[0], ~Funct[0], 2'd0}; //Funct[0] indicates LDR
+			  end
               
               // B/BL
        2'b10: controls = 12'b001_10_1_0_0_0_0_1_0 |
@@ -207,6 +214,8 @@ module decoder (input  logic [1:0] Op,
    assign {RegSrc, ImmSrc, ALUSrc, MemtoReg, SrcBtoReg,
 	      RegW, MemW, Branch, ALUOp} = controls;
 		  
+	assign memOp = (~Op[1]) & Op[0];
+	
 	assign dataOp = (~Op[1]) & (~Op[0]); //We only handle barrel shifting for data operations, for simplicity.
 	assign immOp = Funct[5]; //Funct[5] specifies an immediate for data operations.
 	assign shamt = {shiftInfo[6:3], shiftInfo[2] & ~immOp}; //Last bit always 0 for immediates
@@ -254,13 +263,57 @@ module condlogic (input  logic       clk, reset,
                   input  logic [3:0] ALUFlags,
 				  input  logic		 shifter_carry, cFromShifter,
                   input  logic [1:0] FlagW,
-                  input  logic       PCS, RegW, MemW,
-                  output logic       PCSrc, RegWrite, MemWrite, carry_out);
+                  input  logic       PCS, RegW, MemW, memOp, PReady,
+                  output logic       PCSrc, RegWrite, MemWrite, carry_out, MStrobe, PCEn);
    
    logic [1:0] 			     FlagWrite;
    logic [3:0] 			     Flags;
    logic 			     CondEx;
-
+   
+   //Handle memory latency stuff.
+   reg [0:0]  CURRENT_STATE;
+   reg [0:0]  NEXT_STATE;
+   parameter [0:0] 
+     Idle       	= 1'b0,
+     Transfering    = 1'b1;
+	 
+   always @(negedge clk)
+	begin
+		if(reset == 1'b1)
+			CURRENT_STATE <= Idle;
+		else
+			CURRENT_STATE <= NEXT_STATE;
+		end
+   
+   always @(CURRENT_STATE, PReady, clk)
+	begin
+		case(CURRENT_STATE)
+			Idle:
+				begin
+					//We're not waiting on anything to complete
+					PCEn = ~memOp; //Disable PC if we're starting a memOp
+					MStrobe = memOp; //Enable MStrobe if starting a memOp
+					NEXT_STATE = memOp; //Idle=0, go to idle if not a memOp
+										//Transfering=1, go to transfering if a memOp
+				end
+			Transfering:
+				begin
+					//We've started the transfer process, we just need to wait for
+					//PReady to go low.
+					PCEn = ~PReady; //Once PReady is low, we can proceed execution.
+					MStrobe = PReady; //Maintain MStrobe until PReady done
+					NEXT_STATE = PReady; //If PReady high, stay transfering. Else go to Idle.
+				end
+			default:
+				begin
+					NEXT_STATE <= Idle;
+					PCEn <= 1'b1;
+					MStrobe <= 1'b0;
+				end
+		endcase //case (CURRENT_STATE)
+	end //always @(CURRENT_STATE, PReady, clk)
+					
+					
 
    // Notice hard-coding of FFs to structurally model
    flopenr #(2) flagreg1 (clk, reset, FlagWrite[1], 
@@ -327,7 +380,8 @@ module datapath (input  logic        clk, reset,
                  output logic [31:0] PC,
                  input  logic [31:0] Instr,
                  output logic [31:0] ALUResult, WriteData,
-                 input  logic [31:0] ReadData);
+                 input  logic [31:0] ReadData,
+				 input  logic 		 PCEn);
    
    logic [31:0] 		     PCNext, PCPlus4, PCPlus8;
    logic [31:0] 		     ExtImm, SrcA, SrcB, Op2, logicRes, Result;
@@ -336,7 +390,7 @@ module datapath (input  logic        clk, reset,
    
    // next PC logic
    mux2 #(32)  pcmux (PCPlus4, Result, PCSrc, PCNext);
-   flopr #(32) pcreg (clk, reset, PCNext, PC);
+   flopenr #(32) pcreg (clk, reset, PCEn, PCNext, PC);
    adder #(32) pcadd1 (PC, 32'b100, PCPlus4);
    adder #(32) pcadd2 (PCPlus4, 32'b100, PCPlus8);
 
