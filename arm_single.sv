@@ -209,7 +209,7 @@ module decoder (input  logic [1:0] Op,
 		  
 	assign dataOp = (~Op[1]) & (~Op[0]); //We only handle barrel shifting for data operations, for simplicity.
 	assign immOp = Funct[5]; //Funct[5] specifies an immediate for data operations.
-	assign shamt = {shiftInfo[6:3], shiftInfo[2] & ~immOp}; //Last bit always 0 for immediates
+	assign shamt = {shiftInfo[6:3], shiftInfo[2] & ~immOp} & {5{dataOp}}; //Last bit always 0 for immediates
 	assign shiftType = shiftInfo[1:0] | {immOp, immOp}; //Always 11 (ROR) for immediates.
 	assign cFromShifter = dataOp & Funct[4] & Funct[3] & ~Funct[2] & Funct[1]; //Get carry from the shifter iff we're doing a MOV/LSL/ASR/LSR/ROR
 	

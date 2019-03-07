@@ -20,7 +20,7 @@ module imem (mem_addr, mem_out);
    parameter WordSize = 8;
    
    initial
-     $readmemh("memfile.dat", RAM);	
+     $readmemh("../../lab2-master/benchmarks/mult.dat", RAM);	
    reg [WordSize-1:0] RAM [((1<<AddrSize)-1):0];
 
    // Read Instruction memory

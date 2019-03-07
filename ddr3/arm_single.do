@@ -26,16 +26,11 @@ if [file exists work] {
 }
 vlib work
 
-set MEMORY_FILE ./memfile.dat
-
 # compile source files
 vlog imem.v dmem.v wait_state.v memcontroller.v arm_single.sv top.sv
 
 # start and run simulation
 vsim -novopt work.testbench
-
-# initialize memory (start of user memory is 0x3000=12,288)
-# mem load -startaddress 0 -i ${MEMORY_FILE} -format hex /testbench/dut/imem/RAM
 
 view list
 view wave
@@ -49,6 +44,8 @@ add wave -noupdate -divider -height 32 "Control"
 add wave -hex /testbench/dut/arm/c/*
 add wave -noupdate -divider -height 32 "Conditional"
 add wave -hex /testbench/dut/arm/c/cl/*
+add wave -noupdate -divider -height 32 "ALU"
+add wave -hex /testbench/dut/arm/dp/alu/*
 add wave -noupdate -divider -height 32 "Memory Controller"
 add wave -hex /testbench/dut/dmem_ctrl/*
 add wave -noupdate -divider -height 32 "Wait State Counter"
@@ -74,7 +71,7 @@ configure wave -rowmargin 4
 configure wave -childrowmargin 2
 
 -- Run the Simulation
-run 720 ns
+run 2000 ns
 
 -- Save memory for checking (if needed)
 mem save -outfile dmemory.dat -wordsperline 1 /testbench/dut/dmem/RAM
