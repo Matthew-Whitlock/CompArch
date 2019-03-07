@@ -1,5 +1,11 @@
 Benchmarks:
 
+With perfect memory in simulation:
+Memtest: 	21 cycles
+Fib: 		142 cycles
+Mult: 		75 cycles
+
+With DDR3 controller in hardware:
 Memtest: 	133 cycles
 Fib: 		137 cycles
-Mult: 		
+Mult: 		191 cycles
