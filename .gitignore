@@ -3,6 +3,7 @@ transcript
 *.mpf
 *.x
 *.wlf
+wlf*
 work/*
 */work/*
 *.dat

@@ -122,13 +122,13 @@ module arm (input  logic        clk, reset,
    
    logic [3:0] 			ALUFlags;
    logic 			RegWrite, 
-				ALUSrc, MemtoReg, SrcBtoReg, PCSrc, shifter_carry;
-   logic [2:0] 			RegSrc;
+				ALUSrc, MemtoReg, SrcBtoReg, PCSrc;
+   logic [2:0] 			RegSrc, shifterFlags;
    logic [3:0] 			ALUControl; 
    logic [1:0] 			ImmSrc, shiftType;
    logic [4:0]			shamt;
    
-   controller c (clk, reset, Instr[31:5], ALUFlags, shifter_carry,
+   controller c (clk, reset, Instr[31:5], ALUFlags, shifterFlags,
 		 RegSrc, RegWrite, ImmSrc, 
 		 ALUSrc, ALUControl,
 		 MemWrite, MemtoReg, SrcBtoReg, PCSrc, shiftType, shamt, carry_state);
@@ -136,7 +136,7 @@ module arm (input  logic        clk, reset,
 		RegSrc, RegWrite, ImmSrc,
 		ALUSrc, ALUControl, carry_state,
 		MemtoReg, SrcBtoReg,  PCSrc,
-		shiftType, shamt, shifter_carry, ALUFlags, PC, Instr,
+		shiftType, shamt, shifterFlags, ALUFlags, PC, Instr,
 		ALUResult, WriteData, ReadData);
    
 endmodule // arm
@@ -144,7 +144,7 @@ endmodule // arm
 module controller (input  logic         clk, reset,
                    input  logic [31:5] Instr,
                    input  logic [3:0]   ALUFlags,
-				   input  logic 		shifter_carry,
+				   input  logic [2:0]	shifterFlags,
                    output logic [2:0]   RegSrc,
                    output logic         RegWrite,
                    output logic [1:0]   ImmSrc,
@@ -157,12 +157,12 @@ module controller (input  logic         clk, reset,
 				   output logic 		carry_out);
    
    logic [1:0] 				FlagW;
-   logic 				PCS, RegW, MemW, cFromShifter;
+   logic 				PCS, RegW, MemW, cFromShifter, nzFromShifter;
    
    decoder dec (Instr[27:26], Instr[25:20], Instr[15:12], Instr[11:5],
-		FlagW, PCS, RegW, MemW, cFromShifter,
+		FlagW, PCS, RegW, MemW, cFromShifter, nzFromShifter,
 		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl, shiftType, shamt);
-   condlogic cl (clk, reset, Instr[31:28], ALUFlags, shifter_carry, cFromShifter,
+   condlogic cl (clk, reset, Instr[31:28], ALUFlags, shifterFlags, cFromShifter, nzFromShifter,
 		 FlagW, PCS, RegW, MemW, 
 		 PCSrc, RegWrite, MemWrite, carry_out);
 endmodule
@@ -172,7 +172,7 @@ module decoder (input  logic [1:0] Op,
 		input  logic [3:0] Rd,
 		input logic  [6:0] shiftInfo,
 		output logic [1:0] FlagW,
-		output logic       PCS, RegW, MemW, cFromShifter,
+		output logic       PCS, RegW, MemW, cFromShifter, nzFromShifter,
 		output logic       MemtoReg, SrcBtoReg, ALUSrc,
 		output logic [1:0] ImmSrc,
 		output logic [2:0] RegSrc, 
@@ -211,7 +211,14 @@ module decoder (input  logic [1:0] Op,
 	assign immOp = Funct[5]; //Funct[5] specifies an immediate for data operations.
 	assign shamt = {shiftInfo[6:3], shiftInfo[2] & ~immOp} & {5{dataOp}}; //Last bit always 0 for immediates
 	assign shiftType = shiftInfo[1:0] | {immOp, immOp}; //Always 11 (ROR) for immediates.
-	assign cFromShifter = dataOp & Funct[4] & Funct[3] & ~Funct[2] & Funct[1]; //Get carry from the shifter iff we're doing a MOV/LSL/ASR/LSR/ROR
+	
+	
+	//Data ops other than add, adc, sub, sbc, rsb, rsc, cmp, cmn use the shifter values.
+	//Could simplify by moving below setting ALUControl and using 0?0? of ALUControl.
+	//	Probably should. But I'm lazy and don't want to.
+	assign cFromShifter = dataOp & ~( (~Funct[4] & (Funct[3] | Funct[2])) | (Funct[4] & ~Funct[3] & Funct[2]));
+	//Moves and shifts don't pass through the ALU, and want to use n/z from the shifter.
+	assign nzFromShifter = dataOp & Funct[4] & Funct[3] & ~Funct[2] & Funct[1];
 	
       
    // ALU Decoder             
@@ -252,7 +259,8 @@ endmodule // decoder
 module condlogic (input  logic       clk, reset,
                   input  logic [3:0] Cond,
                   input  logic [3:0] ALUFlags,
-				  input  logic		 shifter_carry, cFromShifter,
+				  input  logic [2:0] shifterFlags, 
+				  input  logic 		 cFromShifter, nzFromShifter,
                   input  logic [1:0] FlagW,
                   input  logic       PCS, RegW, MemW,
                   output logic       PCSrc, RegWrite, MemWrite, carry_out);
@@ -261,13 +269,18 @@ module condlogic (input  logic       clk, reset,
    logic [3:0] 			     Flags;
    logic 			     CondEx;
 
+	logic [1:0] nzFlagsToUse;
+	logic 		cFlagToUse;
+
+
+	assign nzFlagsToUse = nzFromShifter ? shifterFlags[2:1] : ALUFlags[3:2];
+	assign cFlagToUse = cFromShifter ? shifterFlags[0] : ALUFlags[1];
 
    // Notice hard-coding of FFs to structurally model
-   flopenr #(2) flagreg1 (clk, reset, FlagWrite[1], 
-			  {ALUFlags[3:2]}, Flags[3:2]);
-   flopenr #(2) flagreg0 (clk, reset, FlagWrite[0], 
-			  {(ALUFlags[1] & ~cFromShifter) | (shifter_carry & cFromShifter), ALUFlags[0]}, 
-			  Flags[1:0]);
+   flopenr #(3) flagreg1 (clk, reset, FlagWrite[1], 
+			  {nzFlagsToUse, cFlagToUse}, Flags[3:1]);
+   flopenr #(1) flagreg0 (clk, reset, FlagWrite[0], 
+			  {ALUFlags[0]}, Flags[0]);
    
    // write controls are conditional
    condcheck cc (Cond, Flags, CondEx);
@@ -322,7 +335,7 @@ module datapath (input  logic        clk, reset,
                  input  logic        PCSrc,
 				 input  logic [1:0]	 shiftType,
 				 input  logic [4:0]	 shamt,
-				 output logic 		 shifter_carry,
+				 output logic [2:0]	 shifterFlags,
                  output logic [3:0]  ALUFlags,
                  output logic [31:0] PC,
                  input  logic [31:0] Instr,
@@ -358,7 +371,7 @@ module datapath (input  logic        clk, reset,
 
    // Shifter logic
    mux2 #(32)  srcbmux (WriteData, ExtImm, ALUSrc, SrcB);
-   basicShifter shifter (SrcB, shiftType, shamt, Op2, shifter_carry);
+   basicShifter shifter (SrcB, shiftType, shamt, Op2, shifterFlags);
    
    
    alu         alu (SrcA, Op2, ALUControl, carry_in,
@@ -491,7 +504,7 @@ module basicShifter (input logic [31:0] src,
 					 input logic [1:0] shiftType,
 					 input logic [4:0] shamt,
 					output logic [31:0] out,
-					output logic carry);
+					output logic [2:0] shifterFlags);
 	//Make some wires with an extra bit on each side to easily handle carries.
 	logic signed [33:0] ext_src;
 	assign ext_src = {shiftType[1] & src[31], src, 1'b0}; //If doing ASR, we want MSB the same as orig MSB
@@ -506,23 +519,26 @@ module basicShifter (input logic [31:0] src,
 		case (shiftType[1:0])
 			2'b00: begin
 					ext_out = ext_src << shamt; //Shift left
-					carry = ext_src[33];
+					shifterFlags[0] = ext_src[33];
 					out = ext_out[32:1];
 					end
 			2'b01: begin 
 					ext_out = ext_src >> shamt; //Logical shift right
-					carry = ext_src[0];
+					shifterFlags[0] = ext_src[0];
 					out = ext_out[32:1];
 					end
 			2'b10: begin 
 					ext_out = ext_src >>> shamt; //Arithmetic shift right
-					carry = ext_src[0];
+					shifterFlags[0] = ext_src[0];
 					out = ext_out[32:1];
 					end
 			2'b11: begin 
 					ext_out = {1'b0, ror_out[31:0], ror_out[31]}; //ROR
-					carry = ext_src[0];
+					shifterFlags[0] = ext_src[0];
 					out = ext_out[32:1];
 					end
 		endcase
+		
+	assign shifterFlags[1] = (out == 32'b0);
+	assign shifterFlags[2] = out[31];
 endmodule
