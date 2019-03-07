@@ -25,7 +25,7 @@ skipped:
 #and bne
 cmp r1, #0x0
 bne pass1
-b contionalfail
+b conditionalfail
 pass1:
 #We know it passed when it should, but does it not pass when
 #it shouldn't?

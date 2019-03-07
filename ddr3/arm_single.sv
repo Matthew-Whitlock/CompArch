@@ -111,15 +111,15 @@ endmodule // testbench
 
 module arm (input  logic        clk, reset,
             output logic [31:0] PC,
-            input  logic [31:0] Instr,
+(* mark_debug = "true" *)            input  logic [31:0] Instr,
             output logic        MemWrite,
             output logic [31:0] ALUResult, WriteData,
             input  logic [31:0] ReadData,
-			output logic 		MStrobe,
+			output logic 		MemStrobe,
 			input  logic 		PReady);
    
    logic [3:0] 			ALUFlags;
-   logic 			RegWrite, PCEn,
+   logic 			RegWrite, carry_state,
 					ALUSrc, MemtoReg, SrcBtoReg, PCSrc, shifter_carry;
    logic [2:0] 			RegSrc;
    logic [3:0] 			ALUControl; 
@@ -129,15 +129,14 @@ module arm (input  logic        clk, reset,
    controller c (clk, reset, Instr[31:5], ALUFlags, shifter_carry,
 		 RegSrc, RegWrite, ImmSrc, 
 		 ALUSrc, ALUControl,
-		 MemWrite, MemtoReg, SrcBtoReg, PCSrc, shiftType, shamt, carry_state, MStrobe,
-		 PCEn, PReady);
+		 MemWrite, MemtoReg, SrcBtoReg, PCSrc, shiftType, shamt, carry_state, MemStrobe);
    
    datapath dp (clk, reset, 
 		RegSrc, RegWrite, ImmSrc,
 		ALUSrc, ALUControl, carry_state,
 		MemtoReg, SrcBtoReg,  PCSrc,
 		shiftType, shamt, shifter_carry, ALUFlags, PC, Instr,
-		ALUResult, WriteData, ReadData, PCEn);
+		ALUResult, WriteData, ReadData, ~PReady); //Use ~PReady as PC enable flag
    
 endmodule // arm
 
@@ -155,18 +154,17 @@ module controller (input  logic         clk, reset,
 				   output logic [1:0]	shiftType,
 				   output logic [4:0]	shamt,
 				   output logic 		carry_out,
-				   output logic			MStrobe, PCEn,
-				   input  logic 		PReady);
+				   output logic			MStrobe);
    
    logic [1:0] 				FlagW;
-   logic 				PCS, RegW, MemW, cFromShifter, memOp;
+   logic 				PCS, RegW, MemW, cFromShifter;
    
    decoder dec (clk, reset, Instr[27:26], Instr[25:20], Instr[15:12], 
 		Instr[11:5], FlagW, PCS, RegW, MemW, cFromShifter,
-		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl, shiftType, shamt, memOp);
+		MemtoReg, SrcBtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl, shiftType, shamt, MStrobe);
    condlogic cl (clk, reset, Instr[31:28], ALUFlags, shifter_carry, cFromShifter,
-		 FlagW, PCS, RegW, MemW, memOp, PReady,
-		 PCSrc, RegWrite, MemWrite, carry_out, MStrobe, PCEn);
+		 FlagW, PCS, RegW, MemW,
+		 PCSrc, RegWrite, MemWrite, carry_out);
 endmodule
 
 module decoder (input logic clk, reset,
@@ -182,7 +180,7 @@ module decoder (input logic clk, reset,
 		output logic [3:0] ALUControl,
 		output logic [1:0] shiftType,
 		output logic [4:0] shamt,
-		output logic 		memOp);
+		output logic 	   MStrobe);
    
    logic [11:0] 		   controls;
    logic 			   Branch, ALUOp, dataOp, immOp;
@@ -214,7 +212,7 @@ module decoder (input logic clk, reset,
    assign {RegSrc, ImmSrc, ALUSrc, MemtoReg, SrcBtoReg,
 	      RegW, MemW, Branch, ALUOp} = controls;
 		  
-	assign memOp = (~Op[1]) & Op[0];
+	assign MStrobe = (~Op[1]) & Op[0]; //Mem ops mean turn on MStrobe
 	
 	assign dataOp = (~Op[1]) & (~Op[0]); //We only handle barrel shifting for data operations, for simplicity.
 	assign immOp = Funct[5]; //Funct[5] specifies an immediate for data operations.
@@ -263,57 +261,13 @@ module condlogic (input  logic       clk, reset,
                   input  logic [3:0] ALUFlags,
 				  input  logic		 shifter_carry, cFromShifter,
                   input  logic [1:0] FlagW,
-                  input  logic       PCS, RegW, MemW, memOp, PReady,
-                  output logic       PCSrc, RegWrite, MemWrite, carry_out, MStrobe, PCEn);
+                  input  logic       PCS, RegW, MemW,
+                  output logic       PCSrc, RegWrite, MemWrite, carry_out);
    
    logic [1:0] 			     FlagWrite;
    logic [3:0] 			     Flags;
    logic 			     CondEx;
-   
-   //Handle memory latency stuff.
-   reg [0:0]  CURRENT_STATE;
-   reg [0:0]  NEXT_STATE;
-   parameter [0:0] 
-     Idle       	= 1'b0,
-     Transfering    = 1'b1;
-	 
-   always @(negedge clk)
-	begin
-		if(reset == 1'b1)
-			CURRENT_STATE <= Idle;
-		else
-			CURRENT_STATE <= NEXT_STATE;
-		end
-   
-   always @(CURRENT_STATE, PReady, clk)
-	begin
-		case(CURRENT_STATE)
-			Idle:
-				begin
-					//We're not waiting on anything to complete
-					PCEn = ~memOp; //Disable PC if we're starting a memOp
-					MStrobe = memOp; //Enable MStrobe if starting a memOp
-					NEXT_STATE = memOp; //Idle=0, go to idle if not a memOp
-										//Transfering=1, go to transfering if a memOp
-				end
-			Transfering:
-				begin
-					//We've started the transfer process, we just need to wait for
-					//PReady to go low.
-					PCEn = ~PReady; //Once PReady is low, we can proceed execution.
-					MStrobe = PReady; //Maintain MStrobe until PReady done
-					NEXT_STATE = PReady; //If PReady high, stay transfering. Else go to Idle.
-				end
-			default:
-				begin
-					NEXT_STATE <= Idle;
-					PCEn <= 1'b1;
-					MStrobe <= 1'b0;
-				end
-		endcase //case (CURRENT_STATE)
-	end //always @(CURRENT_STATE, PReady, clk)
-					
-					
+		
 
    // Notice hard-coding of FFs to structurally model
    flopenr #(2) flagreg1 (clk, reset, FlagWrite[1], 
@@ -387,6 +341,7 @@ module datapath (input  logic        clk, reset,
    logic [31:0] 		     ExtImm, SrcA, SrcB, Op2, logicRes, Result;
    logic [3:0] 			     RA1, RA2, RA3;
    logic [31:0] 		     RA4;   
+   logic [31:0]              rfs[14:0];
    
    // next PC logic
    mux2 #(32)  pcmux (PCPlus4, Result, PCSrc, PCNext);
@@ -402,7 +357,7 @@ module datapath (input  logic        clk, reset,
    
    regfile     rf (clk, RegWrite, RA1, RA2,
                    RA3, RA4, PCPlus8, 
-                   SrcA, WriteData); 
+                   SrcA, WriteData, rfs[14:0]); 
    
    mux2 #(32)  logicmux (ALUResult, Op2, SrcBtoReg, logicRes);
    mux2 #(32)  resmux (logicRes, ReadData, MemtoReg, Result);
@@ -423,8 +378,9 @@ module regfile (input  logic        clk,
 		input  logic        we3, 
 		input  logic [3:0]  ra1, ra2, wa3, 
 		input  logic [31:0] wd3, r15,
-		output logic [31:0] rd1, rd2);
-   
+		output logic [31:0] rd1, rd2,
+(* mark_debug = "true" *)		output logic [31:0] rf[14:0]);
+		
    logic [31:0] 		    rf[14:0];
    
    // three ported register file

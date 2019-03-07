@@ -16,7 +16,7 @@ module imem (mem_addr, mem_out);
    //   through smaller AddrSize (only used to
    //   allocate memory size -- processor sees
    //   32-bits)
-   parameter AddrSize = 8;
+   parameter AddrSize = 16;
    parameter WordSize = 8;
    
    initial

@@ -30,7 +30,7 @@ module MemControl (PReady, MStrobe, MemWrite, clk, reset);
    reg [2:0]  NEXT_STATE;
 
    // wait state = 15 cycles
-   assign WSCLoadVal = 8'hF;
+   assign WSCLoadVal = 8'h10; // Edited by Matthew from 8'hF
    wait_state WaitStateCtr (LdCtr, WSCLoadVal, Trigger, clk);
 
    assign {PReady, LdCtr} = OutputLogic;
