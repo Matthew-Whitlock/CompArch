@@ -7,5 +7,5 @@ Mult: 		75 cycles
 
 With DDR3 controller in hardware:
 Memtest: 	133 cycles
-Fib: 		137 cycles
+Fib: 		214 cycles
 Mult: 		191 cycles

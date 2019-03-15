@@ -4,6 +4,5 @@ transcript
 *.x
 *.wlf
 wlf*
-work/*
-*/work/*
+**/work/*
 *.dat

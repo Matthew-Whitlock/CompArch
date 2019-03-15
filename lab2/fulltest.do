@@ -26,7 +26,7 @@ if [file exists work] {
 }
 vlib work
 
-set MEMORY_FILE ./fulltest.x
+set MEMORY_FILE ../lab2-master/benchmarks/mult.dat
 
 # compile source files
 vlog imem.v dmem.v arm_single.sv
@@ -77,7 +77,7 @@ configure wave -rowmargin 4
 configure wave -childrowmargin 2
 
 -- Run the Simulation
-run 1250 ns
+run 1500 ns
 
 -- Save memory for checking (if needed)
 mem save -outfile dmemory.dat -wordsperline 1 /testbench/dut/dmem/RAM
