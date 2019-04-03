@@ -121,10 +121,10 @@ module arm (input  logic        clk, reset,
             input  logic [31:0] ReadDataM);
    
    logic [2:0] 			RegSrcD;
-   logic [1:0] 			ImmSrcD, ALUControlE;
+   logic [1:0] 			ImmSrcD;
    logic 			ALUSrcE, BranchTakenE, MemtoRegW,
 				PCSrcW, RegWriteW, srcBtoRegE;
-   logic [3:0] 			ALUFlagsE;
+   logic [3:0] 			ALUFlagsE, ALUControlE;
    logic [31:0] 		InstrD;
    logic 			RegWriteM, MemtoRegE, PCWrPendingF;
    logic [1:0] 			ForwardAE, ForwardBE;
@@ -135,7 +135,7 @@ module arm (input  logic        clk, reset,
    
    controller c (clk, reset, InstrD[31:12], ALUFlagsE, 
 		 RegSrcD, ImmSrcD,
-		 ALUSrcE, BranchTakenE, srcBtoRegE, ALUControlE,
+		 ALUSrcE, BranchTakenE, srcBtoRegE, carryE, ALUControlE,
 		 MemWriteM,
 		 MemtoRegW, PCSrcW, RegWriteW,
 		 RegWriteM, MemtoRegE, PCWrPendingF,
@@ -143,7 +143,7 @@ module arm (input  logic        clk, reset,
    datapath dp (clk, reset, 
 		RegSrcD, ImmSrcD, 
 		ALUSrcE, BranchTakenE, ALUControlE,
-		MemtoRegW, PCSrcW, RegWriteW, srcBtoRegE,
+		MemtoRegW, PCSrcW, RegWriteW, srcBtoRegE, carryE,
 		PCF, InstrF, InstrD,
 		ALUOutM, WriteDataM, ReadDataM,
 		ALUFlagsE,
@@ -161,11 +161,11 @@ endmodule // arm
 
 module controller (input  logic         clk, reset,
                    input  logic [31:12] InstrD,
-                   input  logic [3:0]   ALUFlagsE,
+				   input  logic [3:0]   ALUFlagsE,
                    output logic [2:0]   RegSrcD, 
-		   output logic [1:0]   ImmSrcD, 
-                   output logic         ALUSrcE, BranchTakenE, srcBtoRegE,
-                   output logic [1:0]   ALUControlE,
+				   output logic [1:0]   ImmSrcD, 
+                   output logic         ALUSrcE, BranchTakenE, srcBtoRegE, carryE,
+                   output logic [3:0]   ALUControlE,
                    output logic         MemWriteM,
                    output logic         MemtoRegW, PCSrcW, RegWriteW,
                    // hazard interface
@@ -175,7 +175,7 @@ module controller (input  logic         clk, reset,
 
    logic [10:0]				controlsD;
    logic 				CondExE, ALUOpD;
-   logic [1:0] 				ALUControlD;
+   logic [3:0] 				ALUControlD;
    logic 				ALUSrcD, srcBtoRegD;
    logic 				MemtoRegD, MemtoRegM;
    logic 				RegWriteD, RegWriteE, RegWriteGatedE;
@@ -212,25 +212,35 @@ module controller (input  logic         clk, reset,
    assign {RegSrcD, ImmSrcD, ALUSrcD, MemtoRegD, srcBtoRegD, 
            RegWriteD, MemWriteD, BranchD, ALUOpD} = controlsD; 
    
-   always_comb
-     if (ALUOpD) 
-       begin                 // which Data-processing Instr?
-	  case(InstrD[24:21]) 
-  	    4'b0100: ALUControlD = 2'b00; // ADD
-  	    4'b0010: ALUControlD = 2'b01; // SUB
-            4'b0000: ALUControlD = 2'b10; // AND
-  	    4'b1100: ALUControlD = 2'b11; // ORR
-  	    default: ALUControlD = 2'bx;  // unimplemented
-	  endcase
-	  FlagWriteD[1]   = InstrD[20];   // update N/Z Flags if S bit is set
-	  FlagWriteD[0]   = InstrD[20] & 
-			    (ALUControlD == 2'b00 | ALUControlD == 2'b01);
-       end 
-     else 
-       begin
-	  ALUControlD     = 2'b00;        // perform addition for non-dp instr
-	  FlagWriteD      = 2'b00;        // don't update Flags
-       end
+
+	always_comb
+     if (ALUOpD) begin                 // which DP Instr?
+	    case(InstrD[24:21]) 
+  	      4'b0100: ALUControlD = 4'b0000; // ADD
+  	      4'b0101: ALUControlD = 4'b0100; // ADC
+      	  4'b0010: ALUControlD = 4'b0001; // SUB
+      	  4'b0110: ALUControlD = 4'b0101; // SBC
+          4'b0000: ALUControlD = 4'b0010; // AND
+		  4'b1000: ALUControlD = 4'b0010; // TST, just and
+      	  4'b1100: ALUControlD = 4'b0011; // ORR
+		  4'b0001: ALUControlD = 4'b0111; // EOR
+		  4'b1001: ALUControlD = 4'b0111; // TEQ, just xor
+    	  4'b1110: ALUControlD = 4'b0110; // BIC, and w/ inverted b
+    	  4'b1011: ALUControlD = 4'b0000; // CMN, just add
+    	  4'b1010: ALUControlD = 4'b0001; // CMP, just subtract
+		  4'b1111: ALUControlD = 4'b1000; // MVN, do ~b
+      	  default: ALUControlD = 4'bx;   // unimplemented
+		endcase
+		// update flags if S bit is set 
+		// (C & V only updated for arith instructions)
+		FlagWriteD[1]      = Funct[0]; // FlagW[1] = S-bit
+		// FlagW[0] = S-bit & (ADD | SUB) (ADD/SUB indicated by 0?0? to account for add/adc/sub/sbc)
+		FlagWriteD[0]      = Funct[0] & 
+			~(ALUControlD[3] | ALUControlD[1]); 
+     end else begin
+		ALUControlD = 4'b0000; // add for non-DP instructions
+		FlagWriteD      = 2'b00; // don't update Flags
+     end
 
    assign PCSrcD       = (((InstrD[15:12] == 4'b1111) & RegWriteD) | BranchD);
    
@@ -240,12 +250,13 @@ module controller (input  logic         clk, reset,
 			     RegWriteD, PCSrcD, MemtoRegD},
                             {FlagWriteE, BranchE, MemWriteE, 
 			     RegWriteE, PCSrcE, MemtoRegE});
-   flopr #(4)  regsE(clk, reset,
+   flopr #(6)  regsE(clk, reset,
                      {ALUSrcD, srcBtoRegD, ALUControlD},
                      {ALUSrcE, srcBtoRegE, ALUControlE});
    
    flopr  #(4) condregE(clk, reset, InstrD[31:28], CondE);
    flopr  #(4) flagsreg(clk, reset, FlagsNextE, FlagsE);
+   assign carryE = CondE[1];
 
    // write and Branch controls are conditional
    conditional Cond (CondE, FlagsE, ALUFlagsE, FlagWriteE, 
@@ -302,10 +313,10 @@ module conditional (input  logic [3:0] Cond,
        default: CondEx = 1'bx;             // undefined
      endcase
    
-   assign FlagsNext[3:2] = (FlagsWrite[1] & CondEx) ? 
-			   ALUFlags[3:2] : Flags[3:2];
-   assign FlagsNext[1:0] = (FlagsWrite[0] & CondEx) ? 
-			   ALUFlags[1:0] : Flags[1:0];
+   assign FlagsNext[3:1] = (FlagsWrite[1] & CondEx) ? 
+			   ALUFlags[3:1] : Flags[3:1];
+   assign FlagsNext[0] = (FlagsWrite[0] & CondEx) ? 
+			   ALUFlags[0] : Flags[0];
 
 endmodule // conditional
 
@@ -313,8 +324,8 @@ module datapath (input  logic        clk, reset,
                  input  logic [2:0]  RegSrcD,
 		 input  logic [1:0]  ImmSrcD,
                  input  logic        ALUSrcE, BranchTakenE,
-                 input  logic [1:0]  ALUControlE, 
-                 input  logic        MemtoRegW, PCSrcW, RegWriteW, srcBtoRegE,
+                 input  logic [3:0]  ALUControlE, 
+                 input  logic        MemtoRegW, PCSrcW, RegWriteW, srcBtoRegE, carryE,
                  output logic [31:0] PCF,
                  input  logic [31:0] InstrF,
                  output logic [31:0] InstrD,
@@ -370,7 +381,7 @@ module datapath (input  logic        clk, reset,
    mux3 #(32)  byp1mux (rd1E, ResultW, DataResultM, ForwardAE, SrcAE);
    mux3 #(32)  byp2mux (rd2E, ResultW, DataResultM, ForwardBE, WriteDataE);
    mux2 #(32)  srcbmux (WriteDataE, ExtImmE, ALUSrcE, SrcBE);
-   alu         alu (SrcAE, SrcBE, ALUControlE, ALUResultE, ALUFlagsE);
+   alu         alu (SrcAE, SrcBE, ALUControlE, carryE, ALUResultE, ALUFlagsE);
    mux2 #(32)  resmuxE (ALUResultE, SrcBE, srcBtoRegE, DataResultE); 
    
    // Memory Stage

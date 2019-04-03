@@ -1,68 +1,37 @@
-module tb ();
-
-   logic [31:0] a, b;   
-   logic [1:0] 	ALUControl;   
-   logic [31:0] Result;   
-   logic [3:0] 	ALUFlags;   
-   
-   logic clk;
-
-   integer     handle3;
-   integer     desc3;      
-
-   // Instantiate Device Under Test
-   alu dut (a, b, ALUControl, Result, ALUFlags);   
-
-   // Setup the clock to toggle every 1 time units 
-   initial 
-     begin	
-	clk = 1'b1;
-	forever #5 clk = ~clk;
-     end
-
-   initial
-     begin
-	handle3 = $fopen("alu.out");
-	#100 $finish;		
-     end
-
-   always 
-     begin
-	desc3 = handle3;
-	#5 $fdisplay(desc3, "%b %h %h || %h %b", 
-		     ALUControl, a, b, Result, ALUFlags);
-     end
-
-   // Stimulate the Input Signals
-   initial
-     begin
-	// Add your test vectors here
-	#0  a = 32'h10;
-	#0  b = 32'h8;
-	#0  ALUControl = 2'b01;
-     end
-
-endmodule // tb
-
 module alu (input  logic [31:0] a, b,
-            input  logic [1:0]  ALUControl,
-            output logic [31:0] Result,
+            input  logic [3:0]  ALUControl,
+			input  logic		carry_in,
+			output logic [31:0] Result,
             output logic [3:0]  ALUFlags);
    
    logic 			neg, zero, carry, overflow;
    logic [31:0] 		condinvb;
    logic [32:0] 		sum;
+   logic [31:0]     carrycompensator;
+   
+   always_comb
+     casex ({ALUControl[2], ALUControl[0], carry_in})
+        3'b0??: carrycompensator = 32'd0; //ALUControl[2] specifies ADC or SBC.
+        3'b100: carrycompensator = 32'd0; //Adding, carry is 0
+        3'b101: carrycompensator = 32'd1; //Adding, carry is 1
+        3'b110: carrycompensator = -32'd1;//Subtracting, carry is 0 
+        3'b111: carrycompensator = 32'd0; //Subtracting, carry is 0 
+     endcase
    
    assign condinvb = ALUControl[0] ? ~b : b;
-   assign sum = a + condinvb + ALUControl[0];
+   assign sum = a + condinvb + ALUControl[0] + carrycompensator;
+   
 
    always_comb
-     casex (ALUControl[1:0])
-       2'b0?: Result = sum;
-       2'b10: Result = a & b;
-       2'b11: Result = a | b;
+     casex (ALUControl[3:0])
+       4'b0?0?: Result = sum;
+       4'b0010: Result = a & b;
+	   4'b0110: Result = a & ~b;
+       4'b0011: Result = a | b;
+	   4'b0111: Result = a ^ b;
+	   4'b1000: Result = ~b;
      endcase
-
+   
    assign neg      = Result[31];
    assign zero     = (Result == 32'b0);
    assign carry    = (ALUControl[1] == 1'b0) & sum[32];
