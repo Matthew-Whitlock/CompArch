@@ -26,18 +26,35 @@ if [file exists work] {
 }
 vlib work
 
+set MEMORY_FILE ./memfile.dat
+
 # compile source files
-vlog alu.sv
+vlog imem.v dmem.v arm_pipelined.sv alu.sv
 
 # start and run simulation
-vsim -novopt work.tb
+vsim -novopt work.testbench
+
+# initialize memory (start of user memory is 0x3000=12,288)
+mem load -startaddress 0 -i ${MEMORY_FILE} -format hex /testbench/dut/imem/RAM
 
 # view list
 # view wave
 
 -- display input and output signals as hexidecimal values
 # Diplays All Signals recursively
-add wave -hex -r /tb/*
+# add wave -hex -r /stimulus/*
+add wave -noupdate -divider -height 32 "Datapath"
+add wave -hex /testbench/dut/arm/dp/*
+add wave -noupdate -divider -height 32 "Control"
+add wave -hex /testbench/dut/arm/c/*
+add wave -noupdate -divider -height 32 "Data Memory"
+add wave -hex /testbench/dut/dmem/*
+add wave -noupdate -divider -height 32 "Instruction Memory"
+add wave -hex /testbench/dut/imem/*
+add wave -noupdate -divider -height 32 "Register File"
+add wave -hex /testbench/dut/arm/dp/rf/*
+add wave -hex /testbench/dut/arm/dp/rf/rf
+
 
 -- Set Wave Output Items 
 TreeUpdate [SetDefaultTree]
@@ -52,5 +69,8 @@ configure wave -rowmargin 4
 configure wave -childrowmargin 2
 
 -- Run the Simulation
-run 230 ns
+run 570 ns
 
+-- Save memory for checking (if needed)
+mem save -outfile dmemory.dat -wordsperline 1 /testbench/dut/dmem/RAM
+mem save -outfile imemory.dat -wordsperline 1 /testbench/dut/imem/RAM
