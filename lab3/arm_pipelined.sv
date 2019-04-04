@@ -120,33 +120,34 @@ module arm (input  logic        clk, reset,
             output logic [31:0] ALUOutM, WriteDataM,
             input  logic [31:0] ReadDataM);
    
-   logic [2:0] 			RegSrcD;
+   logic [2:0] 			RegSrcD, shifterFlagsE;
    logic [1:0] 			ImmSrcD;
    logic 			ALUSrcE, BranchTakenE, MemtoRegW,
 				PCSrcW, RegWriteW, srcBtoRegE;
    logic [3:0] 			ALUFlagsE, ALUControlE;
+   logic [4:0]			shamtE;
    logic [31:0] 		InstrD;
    logic 			RegWriteM, MemtoRegE, PCWrPendingF;
-   logic [1:0] 			ForwardAE, ForwardBE;
+   logic [1:0] 			ForwardAE, ForwardBE, shiftTypeE;
    logic 			StallF, StallD, FlushD, FlushE;
    logic 			Match_1E_M, Match_1E_W, 
 				Match_2E_M, Match_2E_W, 
 				Match_12D_E;
    
-   controller c (clk, reset, InstrD[31:12], ALUFlagsE, 
-		 RegSrcD, ImmSrcD,
+   controller c (clk, reset, InstrD[31:5], ALUFlagsE, shifterFlagsE,
+		 RegSrcD, ImmSrcD, shiftTypeE, shamtE,
 		 ALUSrcE, BranchTakenE, srcBtoRegE, carryE, ALUControlE,
 		 MemWriteM,
 		 MemtoRegW, PCSrcW, RegWriteW,
 		 RegWriteM, MemtoRegE, PCWrPendingF,
 		 FlushE);
    datapath dp (clk, reset, 
-		RegSrcD, ImmSrcD, 
+		RegSrcD, ImmSrcD, shiftTypeE, shamtE,
 		ALUSrcE, BranchTakenE, ALUControlE,
 		MemtoRegW, PCSrcW, RegWriteW, srcBtoRegE, carryE,
 		PCF, InstrF, InstrD,
 		ALUOutM, WriteDataM, ReadDataM,
-		ALUFlagsE,
+		ALUFlagsE, shifterFlagsE,
 		Match_1E_M, Match_1E_W, Match_2E_M, Match_2E_W, 
 		Match_12D_E,
 		ForwardAE, ForwardBE, StallF, StallD, FlushD);   
@@ -160,10 +161,12 @@ module arm (input  logic        clk, reset,
 endmodule // arm
 
 module controller (input  logic         clk, reset,
-                   input  logic [31:12] InstrD,
+                   input  logic [31:5] InstrD,
 				   input  logic [3:0]   ALUFlagsE,
+				   input  logic [2:0]   shifterFlagsE,
                    output logic [2:0]   RegSrcD, 
-				   output logic [1:0]   ImmSrcD, 
+				   output logic [1:0]   ImmSrcD, shiftTypeE,
+				   output logic [4:0]   shamtE,
                    output logic         ALUSrcE, BranchTakenE, srcBtoRegE, carryE,
                    output logic [3:0]   ALUControlE,
                    output logic         MemWriteM,
@@ -181,11 +184,14 @@ module controller (input  logic         clk, reset,
    logic 				RegWriteD, RegWriteE, RegWriteGatedE;
    logic 				MemWriteD, MemWriteE, MemWriteGatedE;
    logic 				BranchD, BranchE;
-   logic [1:0] 				FlagWriteD, FlagWriteE;
+   logic				cFromShifterD, nzFromShifterD, cFromShifterE, nzFromShifterE;
+   logic [1:0] 				FlagWriteD, FlagWriteE, shiftTypeD, Op;
    logic 				PCSrcD, PCSrcE, PCSrcM;
    logic [3:0] 				FlagsE, FlagsNextE, CondE;
+   logic [4:0]			shamtD;
 
    logic [5:0] Funct;
+   logic [6:0] shiftInfoD;
    assign Funct = InstrD[25:20];
 
    // Decode stage   
@@ -211,7 +217,17 @@ module controller (input  logic         clk, reset,
    // bits:  3,2,1,1,1,1,1,1 = 11
    assign {RegSrcD, ImmSrcD, ALUSrcD, MemtoRegD, srcBtoRegD, 
            RegWriteD, MemWriteD, BranchD, ALUOpD} = controlsD; 
+   assign shiftInfoD = InstrD[11:5];
+   assign Op = InstrD[27:26];
+   assign shamtD = {shiftInfoD[6:3], shiftInfoD[2] & ~Funct[5]} & {5{(~Op[1]) & (~Op[0])}}; //Last bit always 0 for immediates, only non-zero value for data operations
+   assign shiftTypeD = shiftInfoD[1:0] | {Funct[5], Funct[5]}; //Always 11 (ROR) for immediates.
    
+   //Data ops other than add, adc, sub, sbc, rsb, rsc, cmp, cmn use the shifter values.
+	//Could simplify by moving below setting ALUControl and using 0?0? of ALUControl.
+	//	Probably should. But I'm lazy and don't want to.
+	assign cFromShifterD = {(~Op[1]) & (~Op[0])} & ~( (~Funct[4] & (Funct[3] | Funct[2])) | (Funct[4] & ~Funct[3] & Funct[2]));
+	//Moves and shifts don't pass through the ALU, and want to use n/z from the shifter.
+	assign nzFromShifterD = {(~Op[1]) & (~Op[0])} & Funct[4] & Funct[3] & ~Funct[2] & Funct[1];
 
 	always_comb
      if (ALUOpD) begin                 // which DP Instr?
@@ -250,17 +266,17 @@ module controller (input  logic         clk, reset,
 			     RegWriteD, PCSrcD, MemtoRegD},
                             {FlagWriteE, BranchE, MemWriteE, 
 			     RegWriteE, PCSrcE, MemtoRegE});
-   flopr #(6)  regsE(clk, reset,
-                     {ALUSrcD, srcBtoRegD, ALUControlD},
-                     {ALUSrcE, srcBtoRegE, ALUControlE});
+   flopr #(15)  regsE(clk, reset,
+                     {ALUSrcD, srcBtoRegD, ALUControlD, shamtD, shiftTypeD, cFromShifterD, nzFromShifterD},
+                     {ALUSrcE, srcBtoRegE, ALUControlE, shamtE, shiftTypeE, cFromShifterE, nzFromShifterE});
    
    flopr  #(4) condregE(clk, reset, InstrD[31:28], CondE);
    flopr  #(4) flagsreg(clk, reset, FlagsNextE, FlagsE);
    assign carryE = CondE[1];
 
    // write and Branch controls are conditional
-   conditional Cond (CondE, FlagsE, ALUFlagsE, FlagWriteE, 
-		     CondExE, FlagsNextE);
+   conditional Cond (CondE, FlagsE, ALUFlagsE, shifterFlagsE, cFromShifterE, nzFromShifterE,
+			 FlagWriteE, CondExE, FlagsNextE);
    assign BranchTakenE    = BranchE & CondExE;
    assign RegWriteGatedE  = RegWriteE & CondExE;
    assign MemWriteGatedE  = MemWriteE & CondExE;
@@ -284,11 +300,14 @@ endmodule // controller
 module conditional (input  logic [3:0] Cond,
                     input  logic [3:0] Flags,
                     input  logic [3:0] ALUFlags,
+					input  logic [2:0] shifterFlags,
+					input  logic cFromShifter, nzFromShifter,
                     input  logic [1:0] FlagsWrite,
                     output logic       CondEx,
                     output logic [3:0] FlagsNext);
    
-   logic 			       neg, zero, carry, overflow, ge;
+   logic 	   neg, zero, carry, overflow, ge, cFlagToUse;
+   logic [1:0] nzFlagsToUse;
    
    assign {neg, zero, carry, overflow} = Flags;
    assign ge = (neg == overflow);
@@ -313,8 +332,11 @@ module conditional (input  logic [3:0] Cond,
        default: CondEx = 1'bx;             // undefined
      endcase
    
+   assign nzFlagsToUse = nzFromShifter ? shifterFlags[2:1] : ALUFlags[3:2];
+   assign cFlagToUse = cFromShifter ? shifterFlags[0] : ALUFlags[1];
+   
    assign FlagsNext[3:1] = (FlagsWrite[1] & CondEx) ? 
-			   ALUFlags[3:1] : Flags[3:1];
+			   {nzFlagsToUse, cFlagToUse} : Flags[3:1];
    assign FlagsNext[0] = (FlagsWrite[0] & CondEx) ? 
 			   ALUFlags[0] : Flags[0];
 
@@ -322,7 +344,8 @@ endmodule // conditional
 
 module datapath (input  logic        clk, reset,
                  input  logic [2:0]  RegSrcD,
-		 input  logic [1:0]  ImmSrcD,
+				 input  logic [1:0]  ImmSrcD, shiftTypeE,
+				 input  logic [4:0]  shamtE,
                  input  logic        ALUSrcE, BranchTakenE,
                  input  logic [3:0]  ALUControlE, 
                  input  logic        MemtoRegW, PCSrcW, RegWriteW, srcBtoRegE, carryE,
@@ -332,6 +355,7 @@ module datapath (input  logic        clk, reset,
                  output logic [31:0] DataResultM, WriteDataM,
                  input  logic [31:0] ReadDataM,
                  output logic [3:0]  ALUFlagsE,
+				 output logic [2:0]  shifterFlagsE,
                  // hazard logic
                  output logic        Match_1E_M, Match_1E_W, 
 		 output logic        Match_2E_M, Match_2E_W, Match_12D_E,
@@ -341,7 +365,7 @@ module datapath (input  logic        clk, reset,
    logic [31:0] 		     PCPlus4F, PCnext1F, PCnextF;
    logic [31:0] 		     PCPlus4D, PCPlus4E, PCPlus4M, PCPlus4W;   
    logic [31:0] 		     ExtImmD, rd1D, rd2D, PCPlus8D;
-   logic [31:0] 		     rd1E, rd2E, ExtImmE, SrcAE, SrcBE;
+   logic [31:0] 		     rd1E, rd2E, ExtImmE, SrcAE, SrcBE, Op2E;
    logic [31:0] 		     WriteDataE, ALUResultE, DataResultE;
    logic [31:0] 		     ReadDataW, DataResultW, ResultW;
    logic [3:0] 			     RA1D, RA2D, RA3D, RA1E, RA2E;
@@ -381,7 +405,8 @@ module datapath (input  logic        clk, reset,
    mux3 #(32)  byp1mux (rd1E, ResultW, DataResultM, ForwardAE, SrcAE);
    mux3 #(32)  byp2mux (rd2E, ResultW, DataResultM, ForwardBE, WriteDataE);
    mux2 #(32)  srcbmux (WriteDataE, ExtImmE, ALUSrcE, SrcBE);
-   alu         alu (SrcAE, SrcBE, ALUControlE, carryE, ALUResultE, ALUFlagsE);
+   basicShifter shifter (SrcBE, shiftTypeE, shamtE, Op2E, shifterFlagsE);
+   alu         alu (SrcAE, Op2E, ALUControlE, carryE, ALUResultE, ALUFlagsE);
    mux2 #(32)  resmuxE (ALUResultE, SrcBE, srcBtoRegE, DataResultE); 
    
    // Memory Stage
@@ -533,6 +558,50 @@ module alu (input  logic [31:0] a, b,
    assign ALUFlags    = {neg, zero, carry, overflow};
    
 endmodule // alu
+
+module basicShifter (input logic [31:0] src,
+					 input logic [1:0] shiftType,
+					 input logic [4:0] shamt,
+					output logic [31:0] out,
+					output logic [2:0] shifterFlags);
+	//Make some wires with an extra bit on each side to easily handle carries.
+	logic signed [33:0] ext_src;
+	assign ext_src = {shiftType[1] & src[31], src, 1'b0}; //If doing ASR, we want MSB the same as orig MSB
+	logic [63:0] super_ext_src;
+	assign super_ext_src = {src, src}; //Make "rotating" easier (though very inefficient) 
+	logic [33:0] ext_out;
+	logic [63:0] ror_out;
+	assign ror_out = super_ext_src >> shamt;
+	
+	
+	always_comb
+		case (shiftType[1:0])
+			2'b00: begin
+					ext_out = ext_src << shamt; //Shift left
+					shifterFlags[0] = ext_src[33];
+					out = ext_out[32:1];
+					end
+			2'b01: begin 
+					ext_out = ext_src >> shamt; //Logical shift right
+					shifterFlags[0] = ext_src[0];
+					out = ext_out[32:1];
+					end
+			2'b10: begin 
+					ext_out = ext_src >>> shamt; //Arithmetic shift right
+					shifterFlags[0] = ext_src[0];
+					out = ext_out[32:1];
+					end
+			2'b11: begin 
+					ext_out = {1'b0, ror_out[31:0], ror_out[31]}; //ROR
+					shifterFlags[0] = ext_src[0];
+					out = ext_out[32:1];
+					end
+		endcase
+		
+	assign shifterFlags[1] = (out == 32'b0);
+	assign shifterFlags[2] = out[31];
+endmodule //basicShifter
+
 
 module adder #(parameter WIDTH=8)
    (input  logic [WIDTH-1:0] a, b, output logic [WIDTH-1:0] y);
