@@ -29,7 +29,7 @@ vlib work
 set MEMORY_FILE ./memfile.dat
 
 # compile source files
-vlog imem.v dmem.v arm_pipelined.sv alu.sv
+vlog imem.v dmem.v arm_pipelined.sv
 
 # start and run simulation
 vsim -novopt work.testbench

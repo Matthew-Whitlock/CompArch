@@ -407,7 +407,7 @@ module datapath (input  logic        clk, reset,
    mux2 #(32)  srcbmux (WriteDataE, ExtImmE, ALUSrcE, SrcBE);
    basicShifter shifter (SrcBE, shiftTypeE, shamtE, Op2E, shifterFlagsE);
    alu         alu (SrcAE, Op2E, ALUControlE, carryE, ALUResultE, ALUFlagsE);
-   mux2 #(32)  resmuxE (ALUResultE, SrcBE, srcBtoRegE, DataResultE); 
+   mux2 #(32)  resmuxE (ALUResultE, Op2E, srcBtoRegE, DataResultE); 
    
    // Memory Stage
    flopr #(32) aluresreg (clk, reset, DataResultE, DataResultM);
