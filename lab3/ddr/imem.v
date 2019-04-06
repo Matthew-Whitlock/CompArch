@@ -20,7 +20,7 @@ module imem (mem_addr, mem_out);
    parameter WordSize = 8;
    
    initial
-     $readmemh("fulltest.x", RAM);
+     $readmemh("fib.dat", RAM);
    reg [WordSize-1:0] RAM [((1<<AddrSize)-1):0];
 
    // Read Instruction memory

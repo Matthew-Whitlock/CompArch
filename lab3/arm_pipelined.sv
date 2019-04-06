@@ -176,7 +176,7 @@ module controller (input  logic         clk, reset,
                    output logic         PCWrPendingF,
                    input  logic         FlushE);
 
-   logic [10:0]				controlsD;
+   logic [11:0]				controlsD;
    logic 				CondExE, ALUOpD;
    logic [3:0] 				ALUControlD;
    logic 				ALUSrcD, srcBtoRegD;

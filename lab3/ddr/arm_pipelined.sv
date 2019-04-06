@@ -109,7 +109,7 @@ module arm (input  logic        clk, reset,
    logic [2:0] 			RegSrcD, shifterFlagsE;
    logic [1:0] 			ImmSrcD;
    logic 			ALUSrcE, BranchTakenE, MemtoRegW,
-				PCSrcW, RegWriteW, srcBtoRegE;
+				PCSrcW, RegWriteW, srcBtoRegE, carryE;
    logic [3:0] 			ALUFlagsE, ALUControlE;
    logic [4:0]			shamtE;
    logic [31:0] 		InstrD;
@@ -165,7 +165,7 @@ module controller (input  logic         clk, reset,
 				   output logic			MemStrobe,
 				   input  logic			PReady);
 
-   logic [10:0]				controlsD;
+   logic [11:0]				controlsD;
    logic 				CondExE, ALUOpD;
    logic [3:0] 				ALUControlD;
    logic 				ALUSrcD, srcBtoRegD;
