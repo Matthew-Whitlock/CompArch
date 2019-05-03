@@ -1,0 +1,91 @@
+
+`include "stdbus.h"
+`include "dbgflags.h"
+
+module Main;
+
+// Asynchronous Driver-Cache Bus
+wire            AStrobe;
+wire    [`ADDR] AAddress;
+wire    [`DATA] AData;
+wire            ARW;
+wire            AReady;
+
+// Synchronous Cache-Memory Bus
+wire            SStrobe;
+wire    [`ADDR] SAddress;
+wire    [`DATA] SData;
+wire            SRW;
+
+// Global Lines
+reg             Reset;
+wire            Clk;
+
+
+// Module Instantiations
+
+Clock clock(Clk);
+
+Driver Driver (
+        AStrobe,
+        ARW,
+        AAddress,
+        AData,
+        AReady,
+        Reset,
+        Clk );
+
+Cache Cache (
+        AStrobe,
+        ARW,
+        AAddress,
+        AData,
+        AReady,
+
+        SStrobe,
+        SRW,
+        SAddress,
+        SData,
+
+        Reset,
+        Clk );
+
+HashMem HashMem (
+        SStrobe,
+        SRW,
+        SAddress,
+        SData,
+        Clk );
+
+
+initial begin
+  Reset = 1;
+  wait (Clk);
+  wait (!Clk);
+  wait (Clk);
+  Reset = 0;
+end
+
+initial begin
+/*
+   $monitor($time, " Clock %b   ABus (%b,%b,%d,%d,%b)   SBus(%b,%b,%d,%d)",
+                Clk, AStrobe, ARW, AAddress, AData, AReady,
+                     SStrobe, SRW, SAddress, SData);
+   $monitor($time, " Clock %b", Clk);
+*/
+end
+
+endmodule /* Main */
+
+
+module Clock (clk);
+output clk;
+reg    clk;
+
+initial
+   clk = 0;
+
+always
+   #(`CLOCKPERIOD / 2)     clk = ~clk;
+
+endmodule /* Clock */
